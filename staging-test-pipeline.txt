@@ -1,0 +1,84 @@
+node {
+    def buildId = BUILD_ID
+    def gitHelperId = "staging-auto-$buildId"
+    def successStatus = true
+    
+    // repos
+    try{
+        parallel gitAmpContesting : {
+            stage("Git amp-contesting repo"){
+                build job: 'utility-amp-contesting-repo-git-helper', parameters: [string(name: 'buildId', value: gitHelperId)]
+            }
+        }, gitPoisonIvy : {
+            stage("Git poisonivy repo"){
+                build job: 'utility-poisonivy-repo-git-helper', parameters: [string(name: 'buildId', value:  gitHelperId)]
+            }
+        }, gitBrackets : {
+            stage("Git brackets client repo"){
+                build job: 'utility-brackets-client-widget-repo-git-helper', parameters: [string(name: 'buildId', value:  gitHelperId)]
+            }
+        }
+    } catch (err){
+        echo "Caught error with Git Repos: $err"
+        error "Error with Git pull from repos: $err"
+    }
+   
+   stage("Updating GIT repos to PENDING"){
+       build job: 'utility-git-helper-set-repo-status', parameters : [string(name: "buildId", value: "$gitHelperId"), string(name: "status", value: "pending"), string(name:"message", value:"build started by automated stating build process build id: $buildId")]
+   }
+   try{
+      parallel buildAmpContestingClient: {
+            stage("building amp-contesting client"){
+                build job: 'amp-contesting-dotnet-client-auto-build', parameters : [string(name: "BUILDID", value: "rc-$buildId")]
+            }
+       }, buildAmpContestingAdmin : {
+            stage("building amp-contesting admin"){
+                build job: 'amp-contesting-dotnet-admin-staging-auto-build', parameters : [string(name: "BUILDID", value: "rc-$buildId")]
+            }
+       }, buildAmpContestingAPI: {
+            stage("building amp-contesting api"){
+                build job: 'amp-contesting-dotnet-api-staging-auto-build', parameters : [string(name: "BUILDID", value: "rc-$buildId")]
+            }
+       }
+   } catch (err){
+       echo "Error when building apps: $err"
+       build job: 'utility-git-helper-set-repo-status', parameters:[string(name:"buildId" ,value:"$gitHelperId"), string(name:"status", value:"failure"), string(name:"message", value:"build stated by automated staging build process Build ID : $buildId")]
+       error "Error when building apps: $err"
+   }
+
+   stage("Deploy to Server"){
+    //   parallel flipAmpContestinAPI: {
+    //       build job: 'utility-windows-server-iis-flip-and-recycle', parameters : [string(name: "COMPUTER_NAME", value: "webstage2.staging.colo"), string(name:"SITE_NAME",value:"ContestAPI\\v1"), string(name:"NEW_PATH",value:"D:\\Websites\\ContestAPI\\1_0\\Build-amp_contesting_di_api_staging-auto-$buildId")]
+    //   }, flipAmpContestingAdmin : {
+    //       build job: 'utility-windows-server-iis-flip-and-recycle', parameters : [string(name: "COMPUTER_NAME", value: "webstage1.staging.colo"), string(name:"SITE_NAME",value:"Listenernetwork Admin\\Contest"), string(name:"NEW_PATH",value:"D:\\Websites\\UGC_Admin\\Build-amp_contesting_ugc_admin_staging-$buildId")]
+    //   }, flipAmpContestClientStandAlone: {
+    //       build job: 'utility-windows-server-iis-flip-and-recycle', parameters : [string(name: "COMPUTER_NAME", value: "webstage2.staging.colo"), string(name:"SITE_NAME",value:"ContestClient"), string(name:"NEW_PATH",value:"D:\\Websites\\ContestClient\\Build-amp_contesting_contest_client_staging-auto-$buildId")]
+    //   }, flipAmpContestingClientStickyFish: {
+    //       build job: 'utility-windows-server-iis-flip-and-recycle', parameters : [string(name: "COMPUTER_NAME", value: "webstage2.staging.colo"), string(name:"SITE_NAME",value:"Listenetwork\\Contest"), string(name:"NEW_PATH",value:"D:\\Websites\\ContestClient\\Build-amp_contesting_contest_client_staging-auto-$buildId")]
+    //   }
+    sh("echo disabled deploy for now")
+   }
+   try{
+      parallel runningAPIAutomationTests : {
+           stage("Run API Automation Tests"){
+               build job: 'amp-contesting-Amp_Contesting_API_Automated_Tests_-_Happy_Path-build-all'
+           }
+       }, runningRobotFrameworkTests:{
+           stage("Run Robot Framework Automation Tests"){
+                build job: 'amp-contesting-robotframework_Smoke_NLW-Caption-Smoke_build-all'
+           }
+       }
+   } catch(err){
+        echo "caught error when running automated tests: $err"
+        build job: 'utility-git-helper-set-repo-status', parameters:[string(name:"buildId" ,value:"$gitHelperId"), string(name:"status", value:"failure"), string(name:"message", value:"build stated by automated staging build process Build ID : $buildId")]
+        error "caught error when running automated tests: $err"
+   }
+
+   stage("document success"){
+       parallel setSuccessStatus: {
+            build job: 'utility-git-helper-set-repo-status', parameters:[string(name:"buildId", value:"$gitHelperId"), string(name:"status", value:"success"), string(name:"message", value:"build stated by automated staging build process Build ID : $buildId")]     
+       }, createPrerelease:{
+            build job: 'utility-git-helper-create-prerelease', parameters:[string(name:"buildId", value:"$gitHelperIdd"), string(name:"releaseTagName", value:"staging-auto-$buildId"), string(name:"message", value:"Build # $buildId was successful")]
+       }
+   }
+}
